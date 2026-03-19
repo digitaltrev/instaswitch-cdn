@@ -198,4 +198,14 @@
   };
 
   console.log("[IS] window.launchInstaSwitch is now available");
+
+  // Auto-launch on load
+  console.log("[IS] auto-launching...");
+  launchInstaSwitch({
+    userId: "test_user_1",
+    email: "test@example.com",
+    onReady: () => console.log("[IS] AUTO: ready"),
+    onExit: () => console.log("[IS] AUTO: user exited"),
+    onError: (err) => console.error("[IS] AUTO: error", err),
+  });
 })();
