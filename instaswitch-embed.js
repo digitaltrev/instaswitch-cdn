@@ -202,7 +202,7 @@
   // Auto-launch on load
   console.log("[IS] auto-launching...");
   launchInstaSwitch({
-    userId: "46",
+    userId: "31",
     email: "trevor@digitalonboarding.com",
     onReady: () => console.log("[IS] AUTO: ready"),
     onExit: () => console.log("[IS] AUTO: user exited"),
