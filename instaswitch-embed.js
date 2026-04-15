@@ -198,4 +198,29 @@
   };
 
   console.log("[IS] window.launchInstaSwitch is now available");
+
+  function wireTriggers() {
+    const triggers = document.querySelectorAll("[data-instaswitch-trigger]");
+    console.log("[IS] found", triggers.length, "trigger element(s)");
+    triggers.forEach((el) => {
+      if (el.dataset.instaswitchBound === "1") return;
+      el.dataset.instaswitchBound = "1";
+      el.addEventListener("click", function (e) {
+        e.preventDefault();
+        window.launchInstaSwitch({
+          userId: el.dataset.userid || "demo_" + Date.now(),
+          email: el.dataset.email || "user@example.com",
+          onReady: () => console.log("[IS] ready"),
+          onExit: () => console.log("[IS] user exited"),
+          onError: (err) => console.error("[IS] error", err),
+        });
+      });
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", wireTriggers);
+  } else {
+    wireTriggers();
+  }
 })();
