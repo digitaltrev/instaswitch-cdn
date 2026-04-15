@@ -1,5 +1,8 @@
 (function () {
-  console.log("[IS] instaswitch-embed.js loaded");
+  const BUILD = "2026-04-15-c";
+  console.log("[IS] instaswitch-embed.js loaded, build:", BUILD);
+  console.log("[IS] document.readyState:", document.readyState);
+  console.log("[IS] location:", location.href);
 
   const SDK_URL =
     "https://sdk.staging.instaswitch.co/latest/instaswitch-sdk.umd.js";
@@ -199,28 +202,63 @@
 
   console.log("[IS] window.launchInstaSwitch is now available");
 
-  function wireTriggers() {
+  function scanTriggers(label) {
     const triggers = document.querySelectorAll("[data-instaswitch-trigger]");
-    console.log("[IS] found", triggers.length, "trigger element(s)");
-    triggers.forEach((el) => {
-      if (el.dataset.instaswitchBound === "1") return;
-      el.dataset.instaswitchBound = "1";
-      el.addEventListener("click", function (e) {
-        e.preventDefault();
+    console.log("[IS][" + label + "] trigger element count:", triggers.length);
+    triggers.forEach((el, i) => {
+      console.log("[IS][" + label + "] trigger #" + i + ":", {
+        tag: el.tagName,
+        id: el.id,
+        userid: el.dataset.userid,
+        email: el.dataset.email,
+      });
+    });
+    return triggers.length;
+  }
+
+  document.addEventListener(
+    "click",
+    function (e) {
+      console.log("[IS] document click seen on:", e.target);
+      const el =
+        e.target && e.target.closest
+          ? e.target.closest("[data-instaswitch-trigger]")
+          : null;
+      if (!el) {
+        console.log("[IS] click was not on a trigger element");
+        return;
+      }
+      console.log("[IS] trigger element matched:", el);
+      console.log("[IS] trigger dataset:", {
+        userid: el.dataset.userid,
+        email: el.dataset.email,
+      });
+      e.preventDefault();
+      try {
         window.launchInstaSwitch({
           userId: el.dataset.userid || "demo_" + Date.now(),
           email: el.dataset.email || "user@example.com",
-          onReady: () => console.log("[IS] ready"),
-          onExit: () => console.log("[IS] user exited"),
-          onError: (err) => console.error("[IS] error", err),
+          onReady: () => console.log("[IS] CLICK: ready"),
+          onExit: () => console.log("[IS] CLICK: user exited"),
+          onError: (err) => console.error("[IS] CLICK: error", err),
         });
-      });
+      } catch (err) {
+        console.error("[IS] launchInstaSwitch threw:", err);
+      }
+    },
+    true
+  );
+  console.log("[IS] document-level click delegator installed (capture phase)");
+
+  scanTriggers("initial");
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      console.log("[IS] DOMContentLoaded fired");
+      scanTriggers("DOMContentLoaded");
     });
   }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", wireTriggers);
-  } else {
-    wireTriggers();
-  }
+  window.addEventListener("load", function () {
+    console.log("[IS] window load fired");
+    scanTriggers("load");
+  });
 })();
