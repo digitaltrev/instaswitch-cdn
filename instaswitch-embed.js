@@ -1,264 +1,83 @@
 (function () {
-  const BUILD = "2026-04-15-c";
-  console.log("[IS] instaswitch-embed.js loaded, build:", BUILD);
-  console.log("[IS] document.readyState:", document.readyState);
-  console.log("[IS] location:", location.href);
+  const TRAY_WEBHOOK_URL = "REPLACE_WITH_TRAY_WEBHOOK_URL";
+  const SDK_URL = "https://sdk.staging.instaswitch.co/latest/instaswitch-sdk.umd.js";
 
-  const SDK_URL =
-    "https://sdk.staging.instaswitch.co/latest/instaswitch-sdk.umd.js";
-  const API_URL =
-    "https://api.staging.instaswitch.co/api/v1/partner/auth/sessions";
-  const API_KEY =
-    "ak_jDO18a1n2Rexu1tTK0WaGqhM:twn4aS37yHvkD2kJ7dgTNtzPWsDij9/+GVOCdEpwwEM=";
-  const API_SECRET = "kHZohtwo6GUq9a4RdTxXD+LM0sQKvYdv9OOFipU8+r8=";
-
-  async function hmacSign(method, path, body, timestamp) {
-    console.log("[IS] hmacSign called", { method, path, timestamp });
-    console.log("[IS] canonical string:", `${method}\\n${path}\\n${body}\\n${timestamp}`);
-    const encoder = new TextEncoder();
-    const canonical = `${method}\n${path}\n${body}\n${timestamp}`;
-    const key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(API_SECRET),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-    const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(canonical));
-    const hex = Array.from(new Uint8Array(sig))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    console.log("[IS] signature generated:", hex);
-    return hex;
-  }
-
-  async function createSession(externalUserId, email) {
-    console.log("[IS] createSession called", { externalUserId, email });
-    const path = "/api/v1/partner/auth/sessions";
-    const body = JSON.stringify({
-      session: { external_user_id: externalUserId, email: email },
-    });
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const signature = await hmacSign("POST", path, body, timestamp);
-
-    console.log("[IS] fetching session from", API_URL);
-    console.log("[IS] request headers:", {
-      "X-API-Key": API_KEY,
-      "X-Signature": signature,
-      "X-Timestamp": timestamp,
-    });
-    console.log("[IS] request body:", body);
-
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "X-API-Key": API_KEY,
-        "X-Signature": signature,
-        "X-Timestamp": timestamp,
-      },
-      body: body,
-    });
-
-    console.log("[IS] session response status:", res.status);
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.error("[IS] session creation failed:", err);
-      throw new Error(err.error || `Auth failed: ${res.status}`);
-    }
-
-    const data = await res.json();
-    console.log("[IS] session created successfully:", {
-      hasJwt: !!data.jwt,
-      hasRefreshToken: !!data.refresh_token,
-      expiresAt: data.expires_at,
-      userId: data.user?.id,
-    });
-    return data;
-  }
-
-  async function refreshSession(refreshToken) {
-    console.log("[IS] refreshSession called");
-    const path = "/api/v1/partner/auth/refresh";
-    const body = JSON.stringify({ refresh_token: refreshToken });
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const signature = await hmacSign("POST", path, body, timestamp);
+  async function getContactIdFromJourney() {
+    const segments = new URL(window.location.href).pathname.split("/");
+    const slug = segments[2];
+    if (!slug) throw new Error("[IS] no journey slug in URL");
 
     const res = await fetch(
-      "https://api.staging.instaswitch.co/api/v1/partner/auth/refresh",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "X-API-Key": API_KEY,
-          "X-Signature": signature,
-          "X-Timestamp": timestamp,
-        },
-        body: body,
-      }
+      "https://api.digitalonboarding.com/v1/journeys/slug/" + encodeURIComponent(slug)
     );
-
-    console.log("[IS] refresh response status:", res.status);
-
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      console.error("[IS] refresh failed:", errBody);
-      throw new Error("Refresh failed: " + res.status);
-    }
-
+    if (!res.ok) throw new Error("[IS] journey lookup failed: " + res.status);
     const data = await res.json();
-    console.log("[IS] refresh successful, new tokens received");
-    return data;
+    if (!data.contact || !data.contact.id) {
+      throw new Error("[IS] no contact.id on journey response");
+    }
+    return data.contact.id;
+  }
+
+  async function trayLogin(contactId) {
+    const res = await fetch(TRAY_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "login", contact_id: contactId }),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      throw new Error("[IS] Tray login failed: " + res.status + " " + err);
+    }
+    return res.json();
+  }
+
+  async function trayRefresh(refreshToken) {
+    const res = await fetch(TRAY_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "refresh", refresh_token: refreshToken }),
+    });
+    if (!res.ok) throw new Error("[IS] Tray refresh failed: " + res.status);
+    return res.json();
   }
 
   function loadSDK() {
     return new Promise((resolve, reject) => {
-      if (window.InstaSwitchSDK) {
-        console.log("[IS] SDK already loaded, skipping");
-        return resolve();
-      }
-      console.log("[IS] loading SDK from", SDK_URL);
+      if (window.InstaSwitchSDK) return resolve();
       const script = document.createElement("script");
       script.src = SDK_URL;
-      script.onload = () => {
-        console.log("[IS] SDK script loaded successfully");
-        console.log("[IS] window.InstaSwitchSDK exists:", !!window.InstaSwitchSDK);
-        console.log("[IS] typeof InstaSwitchSDK:", typeof window.InstaSwitchSDK);
-        resolve();
-      };
-      script.onerror = (e) => {
-        console.error("[IS] SDK script failed to load:", e);
-        reject(new Error("Failed to load InstaSwitch SDK"));
-      };
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("Failed to load InstaSwitch SDK"));
       document.head.appendChild(script);
     });
   }
 
   window.launchInstaSwitch = async function (options = {}) {
-    console.log("[IS] launchInstaSwitch called with options:", {
-      userId: options.userId,
-      email: options.email,
-      requestedStart: options.requestedStart,
-    });
-
-    const userId = options.userId || "default_user";
-    const email = options.email || "user@example.com";
-
     try {
-      console.log("[IS] starting parallel: createSession + loadSDK");
-      const [session] = await Promise.all([
-        createSession(userId, email),
-        loadSDK(),
-      ]);
-      console.log("[IS] both session and SDK ready");
+      const contactId = options.contactId || (await getContactIdFromJourney());
 
+      const [session] = await Promise.all([trayLogin(contactId), loadSDK()]);
       let currentRefreshToken = session.refresh_token;
 
-      console.log("[IS] creating InstaSwitchSDK instance...");
-      const sdkConfig = {
-        apiKey: API_KEY,
+      const sdk = new window.InstaSwitchSDK({
+        apiKey: session.api_key,
         onAuth: async () => {
-          console.log("[IS] onAuth callback fired");
-          const refreshed = await refreshSession(currentRefreshToken);
+          const refreshed = await trayRefresh(currentRefreshToken);
           currentRefreshToken = refreshed.refresh_token;
-          console.log("[IS] onAuth returning new tokens");
           return { jwt: refreshed.jwt, refreshToken: refreshed.refresh_token };
         },
-        onReady: () => {
-          console.log("[IS] onReady callback fired - widget should be visible");
-          if (options.onReady) options.onReady();
-        },
-        onExit: () => {
-          console.log("[IS] onExit callback fired - user closed widget");
-          if (options.onExit) options.onExit();
-        },
-        onError: (error) => {
-          console.error("[IS] onError callback fired:", error);
-          console.error("[IS] error details:", JSON.stringify(error, null, 2));
-          if (options.onError) options.onError(error);
-        },
+        onReady: () => options.onReady && options.onReady(),
+        onExit: () => options.onExit && options.onExit(),
+        onError: (error) => options.onError && options.onError(error),
         requestedStart: options.requestedStart,
-      };
-      console.log("[IS] SDK config (without callbacks):", {
-        apiKey: sdkConfig.apiKey,
-        requestedStart: sdkConfig.requestedStart,
       });
-
-      const sdk = new window.InstaSwitchSDK(sdkConfig);
-      console.log("[IS] InstaSwitchSDK instance created:", sdk);
-      console.log("[IS] SDK instance type:", typeof sdk);
-      console.log("[IS] SDK instance keys:", Object.keys(sdk || {}));
 
       return sdk;
     } catch (err) {
-      console.error("[IS] launchInstaSwitch FAILED:", err);
-      console.error("[IS] error stack:", err.stack);
+      console.error("[IS] launchInstaSwitch failed:", err);
       if (options.onError) options.onError(err);
     }
   };
 
-  console.log("[IS] window.launchInstaSwitch is now available");
-
-  function scanTriggers(label) {
-    const triggers = document.querySelectorAll("[data-instaswitch-trigger]");
-    console.log("[IS][" + label + "] trigger element count:", triggers.length);
-    triggers.forEach((el, i) => {
-      console.log("[IS][" + label + "] trigger #" + i + ":", {
-        tag: el.tagName,
-        id: el.id,
-        userid: el.dataset.userid,
-        email: el.dataset.email,
-      });
-    });
-    return triggers.length;
-  }
-
-  document.addEventListener(
-    "click",
-    function (e) {
-      console.log("[IS] document click seen on:", e.target);
-      const el =
-        e.target && e.target.closest
-          ? e.target.closest("[data-instaswitch-trigger]")
-          : null;
-      if (!el) {
-        console.log("[IS] click was not on a trigger element");
-        return;
-      }
-      console.log("[IS] trigger element matched:", el);
-      console.log("[IS] trigger dataset:", {
-        userid: el.dataset.userid,
-        email: el.dataset.email,
-      });
-      e.preventDefault();
-      try {
-        window.launchInstaSwitch({
-          userId: el.dataset.userid || "demo_" + Date.now(),
-          email: el.dataset.email || "user@example.com",
-          onReady: () => console.log("[IS] CLICK: ready"),
-          onExit: () => console.log("[IS] CLICK: user exited"),
-          onError: (err) => console.error("[IS] CLICK: error", err),
-        });
-      } catch (err) {
-        console.error("[IS] launchInstaSwitch threw:", err);
-      }
-    },
-    true
-  );
-  console.log("[IS] document-level click delegator installed (capture phase)");
-
-  scanTriggers("initial");
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function () {
-      console.log("[IS] DOMContentLoaded fired");
-      scanTriggers("DOMContentLoaded");
-    });
-  }
-  window.addEventListener("load", function () {
-    console.log("[IS] window load fired");
-    scanTriggers("load");
-  });
+  window.addEventListener("load", () => window.launchInstaSwitch());
 })();
