@@ -1,5 +1,5 @@
 (function () {
-  const BUILD = "2026-04-15-c";
+  const BUILD = "2026-06-11-a";
   console.log("[IS] instaswitch-embed.js loaded, build:", BUILD);
   console.log("[IS] document.readyState:", document.readyState);
   console.log("[IS] location:", location.href);
@@ -79,6 +79,32 @@
     return data;
   }
 
+  async function resetUser(externalUserId) {
+    console.log("[IS] resetUser called", { externalUserId });
+    const path =
+      "/api/v1/partner/users/" + encodeURIComponent(externalUserId) + "/reset";
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = await hmacSign("POST", path, "", timestamp);
+
+    const res = await fetch("https://api.staging.instaswitch.co" + path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-API-Key": API_KEY,
+        "X-Signature": signature,
+        "X-Timestamp": timestamp,
+      },
+    });
+
+    console.log("[IS] reset response status:", res.status);
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      console.warn("[IS] reset failed (continuing to launch anyway):", errBody);
+    }
+    return res.ok;
+  }
+
   async function refreshSession(refreshToken) {
     console.log("[IS] refreshSession called");
     const path = "/api/v1/partner/auth/refresh";
@@ -148,6 +174,10 @@
     const email = options.email || "user@example.com";
 
     try {
+      if (options.reset) {
+        console.log("[IS] reset requested - resetting user before launch");
+        await resetUser(userId);
+      }
       console.log("[IS] starting parallel: createSession + loadSDK");
       const [session] = await Promise.all([
         createSession(userId, email),
@@ -238,6 +268,7 @@
         window.launchInstaSwitch({
           userId: el.dataset.userid || "demo_" + Date.now(),
           email: el.dataset.email || "user@example.com",
+          reset: el.dataset.noReset === undefined,
           onReady: () => console.log("[IS] CLICK: ready"),
           onExit: () => console.log("[IS] CLICK: user exited"),
           onError: (err) => console.error("[IS] CLICK: error", err),
