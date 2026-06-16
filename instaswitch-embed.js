@@ -1,5 +1,5 @@
 (function () {
-  const BUILD = "2026-06-11-a";
+  const BUILD = "2026-06-16-a";
   console.log("[IS] instaswitch-embed.js loaded, build:", BUILD);
   console.log("[IS] document.readyState:", document.readyState);
   console.log("[IS] location:", location.href);
@@ -11,6 +11,45 @@
   const API_KEY =
     "ak_jDO18a1n2Rexu1tTK0WaGqhM:twn4aS37yHvkD2kJ7dgTNtzPWsDij9/+GVOCdEpwwEM=";
   const API_SECRET = "kHZohtwo6GUq9a4RdTxXD+LM0sQKvYdv9OOFipU8+r8=";
+
+  // --- Backdrop overlay: dims the page while the widget is open so it pops ---
+  const BACKDROP_ID = "instaswitch-backdrop";
+  // Very high, but intended to sit just *below* the SDK's own modal/iframe
+  // (Atomic-style widgets render near max int). If the backdrop ends up
+  // covering the widget, lower this; if the page isn't dimmed, raise it.
+  const BACKDROP_Z = 2147483000;
+
+  function showBackdrop() {
+    let el = document.getElementById(BACKDROP_ID);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = BACKDROP_ID;
+      el.style.cssText = [
+        "position:fixed",
+        "inset:0",
+        "background:rgba(0,0,0,0.6)",
+        "z-index:" + BACKDROP_Z,
+        "opacity:0",
+        "transition:opacity 200ms ease",
+      ].join(";");
+      document.body.appendChild(el);
+    }
+    void el.offsetWidth; // force reflow so the opacity transition runs
+    el.style.opacity = "1";
+    document.body.style.overflow = "hidden";
+    console.log("[IS] backdrop shown");
+  }
+
+  function hideBackdrop() {
+    document.body.style.overflow = "";
+    const el = document.getElementById(BACKDROP_ID);
+    if (!el) return;
+    el.style.opacity = "0";
+    setTimeout(function () {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 250);
+    console.log("[IS] backdrop hidden");
+  }
 
   async function hmacSign(method, path, body, timestamp) {
     console.log("[IS] hmacSign called", { method, path, timestamp });
@@ -174,6 +213,7 @@
     const email = options.email || "user@example.com";
 
     try {
+      showBackdrop();
       if (options.reset) {
         console.log("[IS] reset requested - resetting user before launch");
         await resetUser(userId);
@@ -188,8 +228,17 @@
       let currentRefreshToken = session.refresh_token;
 
       console.log("[IS] creating InstaSwitchSDK instance...");
+      // Sizing: the SDK caps width at the "large" preset (~900px, clamped to
+      // 90vw) — there is no true custom width. Height (customHeight) accepts
+      // px only, so compute ~85% of the viewport in px (SDK clamps to 100vh).
+      const customWidth = options.customWidth || "large";
+      const customHeight =
+        options.customHeight ||
+        Math.round((window.innerHeight || 800) * 0.85) + "px";
       const sdkConfig = {
         apiKey: API_KEY,
+        customWidth: customWidth,
+        customHeight: customHeight,
         onAuth: async () => {
           console.log("[IS] onAuth callback fired");
           const refreshed = await refreshSession(currentRefreshToken);
@@ -203,17 +252,21 @@
         },
         onExit: () => {
           console.log("[IS] onExit callback fired - user closed widget");
+          hideBackdrop();
           if (options.onExit) options.onExit();
         },
         onError: (error) => {
           console.error("[IS] onError callback fired:", error);
           console.error("[IS] error details:", JSON.stringify(error, null, 2));
+          hideBackdrop();
           if (options.onError) options.onError(error);
         },
         requestedStart: options.requestedStart,
       };
       console.log("[IS] SDK config (without callbacks):", {
         apiKey: sdkConfig.apiKey,
+        customWidth: sdkConfig.customWidth,
+        customHeight: sdkConfig.customHeight,
         requestedStart: sdkConfig.requestedStart,
       });
 
@@ -226,6 +279,7 @@
     } catch (err) {
       console.error("[IS] launchInstaSwitch FAILED:", err);
       console.error("[IS] error stack:", err.stack);
+      hideBackdrop();
       if (options.onError) options.onError(err);
     }
   };
