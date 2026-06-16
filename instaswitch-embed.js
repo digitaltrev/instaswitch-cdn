@@ -1,5 +1,5 @@
 (function () {
-  const BUILD = "2026-06-16-a";
+  const BUILD = "2026-06-16-b";
   console.log("[IS] instaswitch-embed.js loaded, build:", BUILD);
   console.log("[IS] document.readyState:", document.readyState);
   console.log("[IS] location:", location.href);
@@ -300,20 +300,120 @@
     return triggers.length;
   }
 
+  // --- Deliberate reset only ---------------------------------------------
+  // A normal click LAUNCHES (no reset). Reset is triggered two ways:
+  //   1. clicking a separate [data-instaswitch-reset] button, or
+  //   2. long-pressing a [data-instaswitch-trigger] for 2 seconds.
+  const LONG_PRESS_MS = 2000;
+  let pressTimer = null;
+  let longPressFired = false;
+
+  function showToast(msg) {
+    const t = document.createElement("div");
+    t.textContent = msg;
+    t.style.cssText = [
+      "position:fixed",
+      "bottom:24px",
+      "left:50%",
+      "transform:translateX(-50%)",
+      "background:rgba(17,24,39,0.95)",
+      "color:#fff",
+      "font:600 14px/1.4 system-ui,-apple-system,sans-serif",
+      "padding:10px 16px",
+      "border-radius:8px",
+      "z-index:" + (BACKDROP_Z + 2),
+      "box-shadow:0 4px 16px rgba(0,0,0,0.3)",
+    ].join(";");
+    document.body.appendChild(t);
+    setTimeout(function () {
+      if (t.parentNode) t.parentNode.removeChild(t);
+    }, 2600);
+  }
+
+  function resolveUserId(el) {
+    if (el && el.dataset && el.dataset.userid) return el.dataset.userid;
+    const trigger = document.querySelector("[data-instaswitch-trigger]");
+    return (trigger && trigger.dataset.userid) || "default_user";
+  }
+
+  async function resetFromEl(el) {
+    const userId = resolveUserId(el);
+    console.log("[IS] deliberate reset requested for", userId);
+    showToast("Resetting demo user " + userId + "…");
+    try {
+      const ok = await resetUser(userId);
+      showToast(
+        ok ? "✅ Reset complete: " + userId : "⚠️ Reset failed: " + userId
+      );
+    } catch (err) {
+      console.error("[IS] reset threw:", err);
+      showToast("⚠️ Reset error: " + userId);
+    }
+  }
+
+  window.resetInstaSwitchUser = function (userId) {
+    return resetUser(userId || resolveUserId(null));
+  };
+
+  // Long-press detection on trigger elements (2s hold = reset).
   document.addEventListener(
-    "click",
+    "pointerdown",
     function (e) {
-      console.log("[IS] document click seen on:", e.target);
       const el =
         e.target && e.target.closest
           ? e.target.closest("[data-instaswitch-trigger]")
           : null;
+      if (!el) return;
+      longPressFired = false;
+      if (pressTimer) clearTimeout(pressTimer);
+      pressTimer = setTimeout(function () {
+        longPressFired = true;
+        pressTimer = null;
+        console.log("[IS] long-press (2s) detected -> reset");
+        resetFromEl(el);
+      }, LONG_PRESS_MS);
+    },
+    true
+  );
+  function cancelPress() {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  }
+  document.addEventListener("pointerup", cancelPress, true);
+  document.addEventListener("pointercancel", cancelPress, true);
+
+  document.addEventListener(
+    "click",
+    function (e) {
+      const target = e.target && e.target.closest ? e.target : null;
+
+      // 1. Separate reset button — reset only, never launches.
+      const resetEl = target ? target.closest("[data-instaswitch-reset]") : null;
+      if (resetEl) {
+        console.log("[IS] reset button clicked");
+        e.preventDefault();
+        e.stopPropagation();
+        resetFromEl(resetEl);
+        return;
+      }
+
+      // 2. Trigger button.
+      const el = target ? target.closest("[data-instaswitch-trigger]") : null;
       if (!el) {
         console.log("[IS] click was not on a trigger element");
         return;
       }
-      console.log("[IS] trigger element matched:", el);
-      console.log("[IS] trigger dataset:", {
+      // Swallow the click that ends a long-press (reset already fired).
+      if (longPressFired) {
+        console.log("[IS] click suppressed (long-press just reset the user)");
+        longPressFired = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      console.log("[IS] trigger matched, launching (no reset):", {
         userid: el.dataset.userid,
         email: el.dataset.email,
       });
@@ -322,7 +422,7 @@
         window.launchInstaSwitch({
           userId: el.dataset.userid || "demo_" + Date.now(),
           email: el.dataset.email || "user@example.com",
-          reset: el.dataset.noReset === undefined,
+          reset: false,
           onReady: () => console.log("[IS] CLICK: ready"),
           onExit: () => console.log("[IS] CLICK: user exited"),
           onError: (err) => console.error("[IS] CLICK: error", err),
@@ -333,7 +433,7 @@
     },
     true
   );
-  console.log("[IS] document-level click delegator installed (capture phase)");
+  console.log("[IS] reset + launch delegators installed (capture phase)");
 
   scanTriggers("initial");
   if (document.readyState === "loading") {
